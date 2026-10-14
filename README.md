@@ -1,530 +1,289 @@
-# osintpy
+Simple website reconnaissance with readable, color-coded output, third-party
+information sources, and optional direct-target checks.
 
-A Python command-line tool for authorized passive and active website reconnaissance, with readable, color-coded terminal output and structured exports for automation.
+> Only run active checks against targets you own or have explicit permission to
+> assess. Discovering a hostname does not authorize scanning it.
 
-> Only assess domains, hosts, and applications that you own or have explicit permission to test. A domain appearing in a public database does not grant authorization to scan it.
+## Start here
 
-## Contents
+### 1. Prepare the files
 
-- [What the tool does](#what-the-tool-does)
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [Modes and default behavior](#modes-and-default-behavior)
-- [All command-line options](#all-command-line-options)
-- [Module selection](#module-selection)
-- [Passive use cases](#passive-use-cases)
-- [Active use cases](#active-use-cases)
-- [Readable output and colors](#readable-output-and-colors)
-- [Saving, filtering, and automation](#saving-filtering-and-automation)
-- [Scope and safety](#scope-and-safety)
-- [Limitations and interpretation](#limitations-and-interpretation)
-- [Troubleshooting](#troubleshooting)
-- [Exit codes](#exit-codes)
+Save the supplied plain-text script as `recon.py`, and keep `requirements.txt`
+in the same directory. If you named the script `recon2.py`, substitute that name
+in the commands below. The script must contain Python code, not Markdown fences.
 
-## What the tool does
+### 2. Install
 
-osintpy collects domain and website information through independent modules.
-
-| Capability | Mode | Module | Enabled by default? |
-| --- | --- | --- | --- |
-| Domain registration metadata through RDAP | Passive | `rdap` | Yes, in passive mode |
-| Certificate Transparency names and certificate metadata | Passive | `ct` | Yes, in passive mode |
-| Historical public URLs through Wayback CDX | Passive | `archive` | No |
-| Scoped Google dork generation | Passive | `dorks` | No |
-| Google result retrieval through SerpApi | Passive | `dorks` plus `--google-search` | No |
-| DNS record queries | Active | `dns` | Yes, in active mode |
-| Verified live TLS certificate and connection information | Active | `tls` | Yes, in active mode |
-| HTTP headers, title, public metadata, and technology hints | Active | `http` | Yes, in active mode |
-| Bounded same-origin HTML crawling | Active | `crawl` | No |
-| DNS prefix wordlist enumeration | Active | `subdomains` | No |
-| HTTP path wordlist enumeration | Active | `paths` | No |
-
-Technology fingerprinting is part of HTTP inspection and crawling. There is no separate `fingerprint` module or `--fingerprint` option.
-
-The tool uses Python libraries rather than launching `nslookup`, `dnsrecon`, or `gobuster`. Its wordlist checks cover a small subset of the workflows those dedicated tools support; they are not full replacements.
-
-## Installation
-
-### Requirements
-
-- Python 3.10 or newer.
-- The supplied `recon.py` and `requirements.txt`.
-- Network access to the selected information providers and/or authorized target.
-- A SerpApi API key only if you enable Google result retrieval.
-- Optionally, `jq` for the JSONL filtering examples below.
-
-### Linux / macOS
-
-Run these commands inside the extracted project directory:
+Use Python 3.10 or newer. In the project directory:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python recon.py -h
 ```
 
-### Windows PowerShell
+### 3. Run
+
+```bash
+# Passive: registration information and public subdomain candidates.
+python recon.py example.com
+
+# Active: DNS, TLS, and HTTP/technology inspection.
+python recon.py your-authorized-domain.com --active
+
+# Both sets of checks. Does not enable crawling or wordlists.
+python recon.py your-authorized-domain.com --all
+```
+
+Replace the target with your actual authorized domain. `example.com` is a
+placeholder, not a promise that every illustrated port/path exists there.
+A bare hostname is interpreted as an HTTPS URL.
+
+The older option-based syntax also works:
+
+```bash
+python recon.py -u example.com
+```
+
+## The commands you will use most
+
+| Goal | Command |
+| --- | --- |
+| Normal passive overview | `python recon.py example.com` |
+| Direct-target overview | `python recon.py example.com --active` |
+| Passive and direct checks | `python recon.py example.com --all` |
+| Registration only | `python recon.py www.example.com --only registration` |
+| Public subdomains only | `python recon.py example.com --only subdomains` |
+| DNS only | `python recon.py example.com --only dns` |
+| TLS certificate only | `python recon.py https://example.com --only tls` |
+| Website and technology hints | `python recon.py https://example.com --only http` |
+| Save a readable report | `python recon.py example.com -o report.txt` |
+| Save JSONL | `python recon.py example.com -o results.jsonl` |
+| Save TSV | `python recon.py example.com -o results.tsv` |
+| JSONL to the terminal | `python recon.py example.com --json` |
+| Disable colors | `python recon.py example.com --no-color` |
+| Everyday help | `python recon.py -h` |
+| Complete help | `python recon.py --help-all` |
+
+No API key is needed for normal passive or active checks. Only optional Google
+result retrieval needs `SERPAPI_KEY`.
+
+## What runsâ€”and what does not
+
+| Profile | Checks included |
+| --- | --- |
+| Default | Domain registration and public subdomain discovery. |
+| `--active` | DNS records, a verified TLS connection, and HTTP inspection. |
+| `--all` | Both profiles above. |
+
+None of these profiles automatically enables Wayback, Google dorks, crawling,
+DNS wordlists, HTTP path wordlists, or public metadata fetches.
+
+Passive checks contact third-party providers, not the target website. Providers
+can see your lookup queries; passive does not mean anonymous.
+
+Active checks query DNS and/or connect to the target. Technology fingerprinting
+is part of HTTP inspection, not a separate module. It produces hints, not a
+verified inventory or vulnerability report.
+
+## Optional extras
+
+```bash
+# Add historical Wayback URL metadata to a passive run.
+python recon.py example.com --archive
+
+# Generate Google queries. Does not execute searches.
+python recon.py example.com --dorks
+
+# Add a direct same-origin crawl.
+python recon.py your-authorized-domain.com --crawl
+
+# HTTP plus robots.txt and sitemap.xml, without the passive defaults.
+python recon.py your-authorized-domain.com --only http --metadata
+```
+
+Use `--only archive`, `--only dorks`, or `--only crawl` to run just that check.
+Convenience flags add checks; `--only` replaces the profile's default selection.
+For example, `--only http --archive` runs HTTP and the explicitly added archive.
+
+`--crawl` and `--metadata` enable direct target requests even without `--active`.
+
+## Saving output
+
+```bash
+python recon.py example.com -o report.txt
+python recon.py example.com -o results.jsonl
+python recon.py example.com --active -o dns-and-web.tsv
+```
+
+- `.jsonl` and `.ndjson` automatically select JSONL.
+- `.tsv` automatically selects TSV.
+- Other extensions use readable tables unless a format is explicitly selected.
+- Existing output files are overwritten, not appended or automatically backed up.
+- JSONL and TSV never include ANSI color codes.
+- Readable tables show at most 30 rows each by default; this does not truncate
+  collected JSONL/TSV records. Collection limits still apply.
+
+Use `--display-limit 100` to show more table rows, or `--verbose` to include raw
+evidence. Readable reports may wrap long URLs; use structured output for parsing.
+
+## Registration and provider errors
+
+The definitive script includes the color-default fix for the previous
+`KeyError: None` startup crash.
+
+It also handles the two earlier lookup problems:
+
+- Registration uses the registrable domain. `www.geeksforgeeks.org` is queried
+  as `geeksforgeeks.org`, not as a separately registered `www` domain.
+- Public subdomain discovery normally tries crt.name, then crt.sh. A timeout
+  does not mean the target has no subdomains.
+
+A bundled Public Suffix List handles domains such as `example.co.uk` without
+naively taking the last two labels. Private suffixes are considered separately
+for passive discovery, so hosted tenants are not automatically widened to every
+tenant beneath the hosting domain. Registration may still concern the underlying
+hosting-provider domain rather than an individual tenant.
+
+If RDAP.org fails, the tool attempts the relevant registry using IANA bootstrap
+data. Other checks continue when one source is unavailable.
+
+### Status meanings
+
+| Status | Meaning |
+| --- | --- |
+| `ok` | The check completed. Does not establish exhaustive coverage. |
+| `cached` | Fresh cached provider data was used instead of a new retrieval. |
+| `partial` | Some operations failed, evidence was truncated, or explicitly labeled stale data was used. |
+| `unavailable` | The selected lookup/check could not complete. |
+| `failed` | Another error prevented completion. |
+| `interrupted` | The user interrupted the check. |
+
+Provider availability cannot be guaranteed. Timeouts and HTTP errors are not
+silently converted into successful empty results. A failed target request says
+that the check is incomplete rather than claiming there were no findings.
+
+## Requirements
+
+```text
+requests>=2.32,<3
+dnspython>=2.6,<3
+tldextract>=5.1,<6
+rich>=13.7,<15
+```
+
+| Package | Used for |
+| --- | --- |
+| `requests` | Provider and target HTTP requests. |
+| `dnspython` | Explicit DNS enumeration and DNS-prefix wordlists. |
+| `tldextract` | Registrable-domain and private-suffix scope handling. |
+| `rich` | Readable terminal tables, colors, and progress indicators. |
+
+TLS uses Python's built-in `ssl` module. `cryptography`, `gobuster`, `dnsrecon`,
+and `nslookup` are not required by this version. `jq` is optional for the filtering
+examples below. Dependency ranges are not a fully pinned environment lockfile.
+
+On Windows PowerShell, create and activate the environment with:
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python recon.py -h
 ```
 
-If your PowerShell configuration prevents activation, you can invoke the environment directly without changing its execution policy:
+If activation is restricted, use the environment's interpreter directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe recon.py -h
 ```
 
-The collection code uses `requests` and `dnspython`. Earlier v2 packages also list `rich`; install the supplied requirements even if the output updater replaces the presentation code with a standard-library renderer.
-
-### Applying the readable-output update
-
-Skip this if your copy already has the updated output and opt-in flags.
-
-```bash
-python update_recon.py recon.py
-```
-
-The updater creates a backup before changing the scanner. To produce a separate updated copy instead:
-
-```bash
-python update_recon.py recon.py --output recon_readable.py
-```
-
-Run that copy with `python recon_readable.py ...` rather than `python recon.py ...`.
-
-## Quick start
-
-All examples use `example.com` as a placeholder. Replace it with an authorized target. The examples are usage illustrations, not a statement that any public example domain is authorized for active assessment.
-
-All scanner arguments are named options. There are no positional target arguments.
-
-```bash
-# Show every available option.
-python recon.py -h
-
-# Passive defaults: registration metadata and certificate-derived names.
-python recon.py --url example.com
-
-# Active defaults: DNS, TLS, and HTTP inspection.
-python recon.py --url https://example.com --mode active
-
-# Add historical Wayback URLs explicitly.
-python recon.py --url example.com --archive
-
-# Export passive results as JSONL.
-python recon.py --url example.com --format jsonl --output passive.jsonl
-```
-
-## Modes and default behavior
-
-### Passive mode
-
-Passive is the default mode. Its default modules are:
-
-```text
-rdap,ct
-```
-
-These modules query third-party services rather than directly resolving or fetching the target. Public information providers can see your lookup queries. Passive does not mean anonymous.
-
-Wayback and Google dorks do not run unless you explicitly select them.
-
-```bash
-python recon.py --url example.com --mode passive
-```
-
-### Active mode
-
-Active mode must be selected explicitly. Its default modules are:
-
-```text
- dns,tls,http
-```
-
-The tool performs DNS queries and/or connects to the target, depending on the selected modules. Crawling, subdomain wordlists, and path wordlists remain opt-in.
-
-```bash
-python recon.py --url https://example.com --mode active
-```
-
-### URL handling
-
-A hostname without a scheme is treated as HTTPS:
-
-```bash
-python recon.py --url example.com
-# Equivalent target URL: https://example.com/
-```
-
-You can specify a port and starting path:
-
-```bash
-python recon.py --url https://example.com:8443/app/ --mode active --modules http
-```
-
-Active HTTP is restricted to the supplied origin: scheme, hostname, and port. A starting path such as `/app/` is not an authorization boundary; other paths on that origin can be requested by metadata checks, crawling, or path enumeration.
-
-## All command-line options
-
-Run `python recon.py -h` to confirm the exact help text and defaults for your local version. Applying the output updater preserves already-existing presentation options, so its human-table row limit can differ between earlier packages.
-
-### Target, mode, and module selection
-
-| Option | Purpose | Default / notes |
-| --- | --- | --- |
-| `-h`, `--help` | List options and exit. | Does not perform enumeration. |
-| `-u`, `--url` | Target DNS hostname or HTTP(S) URL. | Required. A bare hostname uses HTTPS. |
-| `-m`, `--mode` | Select `passive` or `active`. | `passive`. |
-| `--domain` | Explicit passive parent-domain scope. | Target hostname. Must equal it or be a parent domain. |
-| `--modules` | Comma-separated module list. | Replaces the mode's defaults. Module names must belong to the selected mode. |
-| `--archive` | Add Wayback historical URLs. | Off; passive only. |
-| `--dorks` | Add Google query generation. | Off; passive only. Does not execute searches by itself. |
-| `--google-search` | Enable dorks and retrieve Google results through SerpApi. | Off; passive only. Requires `SERPAPI_KEY`; can consume paid quota. |
-| `--crawl` | Add bounded same-origin crawling. | Off; active only. |
-
-### Output and presentation
-
-| Option | Purpose | Default / notes |
-| --- | --- | --- |
-| `-f`, `--format` | `pretty`, `text`, `jsonl`, or `tsv`. | `pretty`; `text` is a compatibility alias for readable output. |
-| `-o`, `--output` | Write results to a file instead of stdout. | No file. Existing output files are overwritten. |
-| `--color` | `auto`, `always`, or `never`. | `auto`; applies only to readable output. |
-| `--no-color` | Disable readable-output colors. | Alias for `--color never`. |
-| `--display-limit` | Maximum visible rows per human-readable table. | Positive integer. The updater adds a default of 30 where the option was absent; an existing v2 default of 40 is preserved. Check `-h`. |
-| `-v`, `--verbose` | Include raw diagnostic evidence in human output. | Off. Machine-readable output already retains structured records. |
-
-### Network and collection limits
-
-| Option | Purpose | Default / notes |
-| --- | --- | --- |
-| `--timeout` | Timeout per network operation, in seconds. | `15`; positive number. Not a whole-run deadline. |
-| `--delay` | Minimum delay between operations, in seconds. | `0.5`; zero or greater. Not a strict packet-rate limit. |
-| `--max-bytes` | Maximum body bytes read per HTTP response. | `10000000` (10 MB decimal). Oversized JSON API responses fail explicitly rather than being parsed incompletely. |
-| `--archive-limit` | Maximum historical URL rows requested from Wayback. | `200`; relevant only when `archive` is selected. |
-| `--max-pages` | Maximum fetches by the crawl module. | `10`; not a whole-run HTTP-request limit. |
-| `--max-words` | Maximum nonempty, noncomment entries processed per wordlist. | `100`. |
-
-### DNS and wordlists
-
-| Option | Purpose | Default / notes |
-| --- | --- | --- |
-| `--resolver` | DNS resolver IP. Repeat for multiple resolvers. | System resolver if omitted. Active only. |
-| `--dns-types` | Comma-separated DNS record types. | `A,AAAA,MX,NS,TXT,SOA,CAA,CNAME,HTTPS,SVCB`. |
-| `--dns-wordlist` | Read DNS prefixes from a file and enable `subdomains`. | Off; active only. Enumerates beneath the URL hostname. |
-| `--path-wordlist` | Read URL paths from a file and enable `paths`. | Off; active only. Paths are relative to the origin root. |
+<details>
+<summary><strong>Advanced options and examples</strong></summary>
 
 ## Module selection
 
-### Replace defaults
-
-`--modules` selects an exact starting set instead of running the defaults:
-
-```bash
-# Only Certificate Transparency.
-python recon.py --url example.com --modules ct
-
-# Only active DNS.
-python recon.py --url example.com --mode active --modules dns
-
-# Only historical archive URLs.
-python recon.py --url example.com --modules archive
-```
-
-### Add an explicit extra
-
-Convenience flags add their module to the selected/default set:
-
-```bash
-# Default passive checks plus Wayback.
-python recon.py --url example.com --archive
-
-# Only CT, plus the explicitly requested archive module.
-python recon.py --url example.com --modules ct --archive
-
-# Default active checks plus crawling.
-python recon.py --url https://example.com --mode active --crawl
-```
-
-Wordlist arguments enable their corresponding modules even if they are not listed in `--modules`. `--google-search` enables `dorks` as well.
-
-Do not mix passive and active module names in one invocation. Use separate runs when you need both kinds of assessment.
-
-## Passive use cases
-
-### 1. Collect registration data and certificate-derived names
-
-```bash
-python recon.py --url example.com --mode passive
-```
-
-Use this for a small default reconnaissance pass without archive or search-result noise.
-
-### 2. Inspect domain registration information only
-
-```bash
-python recon.py --url example.com --modules rdap
-```
-
-The tool uses structured RDAP data for WHOIS-style registration information. Human output summarizes the domain, registrar when available, status, registration-related events, and nameservers. Redacted or unavailable fields are not invented.
-
-It does not invoke raw port-43 WHOIS or scrape DNSDumpster.
-
-### 3. Find certificate-derived subdomain candidates only
-
-```bash
-python recon.py --url example.com --modules ct
-```
-
-The tool queries crt.sh and reports in-scope certificate names, wildcard patterns, and available certificate metadata. These names are not automatically resolved or fetched.
-
-To show more names in the terminal:
-
-```bash
-python recon.py --url example.com --modules ct --display-limit 100
-```
-
-To retain all collected names without a human display limit:
-
-```bash
-python recon.py --url example.com --modules ct --format jsonl --output certificates.jsonl
-```
-
-A wildcard such as `*.example.com` is a certificate pattern, not evidence that every possible hostname exists.
-
-### 4. Set the passive domain scope explicitly
-
-```bash
-python recon.py \
-  --url www.example.co.uk \
-  --domain example.co.uk \
-  --modules rdap,ct
-```
-
-Without `--domain`, passive lookups use `www.example.co.uk`, not an automatically inferred parent. RDAP may have no registration object for a subdomain.
-
-The tool does not derive a registrable domain by blindly taking the final two hostname labels. Expanding `--domain` must remain within your authorization.
-
-### 5. Collect historical URLs from Wayback
-
-```bash
-# Add archive results to the default passive modules.
-python recon.py --url example.com --archive
-
-# Run the archive module alone with a larger result request.
-python recon.py \
-  --url example.com \
-  --modules archive \
-  --archive-limit 500 \
-  --format jsonl \
-  --output archived-urls.jsonl
-```
-
-The module requests URL metadata from Wayback CDX. It does not download archived page bodies or visit the returned live URLs. Historical results may no longer exist.
-
-`--archive-limit` controls collection; `--display-limit` controls only human presentation.
-
-### 6. Generate Google dorks without executing them
-
-```bash
-python recon.py --url example.com --modules dorks
-```
-
-Alternatively, add them to the default passive checks:
-
-```bash
-python recon.py --url example.com --dorks
-```
-
-The generated queries cover these categories:
-
-| Query category | Examples of what the query targets |
-| --- | --- |
-| Public documents | PDF, DOCX, and XLSX files. |
-| Directory listings | Pages with an `index of` title. |
-| Potentially exposed files | Backup, old, log, and SQL filename extensions. |
-| Administrative pages | URLs containing admin, login, or dashboard. |
-| Confidentiality labels | Text such as confidential or internal use only. |
-
-The module emits queries and Google search URLs as data. It does not open a browser or perform Google searches unless `--google-search` is supplied. Readable output shows the queries rather than dumping the generated search URLs.
-
-### 7. Retrieve Google search results through SerpApi
-
-Linux / macOS:
-
-```bash
-export SERPAPI_KEY='your-api-key'
-python recon.py \
-  --url example.com \
-  --modules dorks \
-  --google-search \
-  --format jsonl \
-  --output google-results.jsonl
-```
-
-Windows PowerShell:
-
-```powershell
-$env:SERPAPI_KEY = 'your-api-key'
-python recon.py --url example.com --modules dorks --google-search
-```
-
-This requests results for five scoped queries. API calls may consume paid quota. The implementation records returned result metadata, such as titles, links, and snippets; it does not paginate through all Google results or download discovered documents.
-
-Search hits are leads for authorized review, not confirmation of sensitive-data exposure. An administrative login page is not automatically a vulnerability.
-
-### 8. Run all implemented passive modules explicitly
-
-```bash
-python recon.py \
-  --url example.com \
-  --mode passive \
-  --modules rdap,ct,archive,dorks \
-  --format jsonl \
-  --output passive-full.jsonl
-```
-
-Add `--google-search` only if you want the dork searches executed and have configured the API key.
-
-## Active use cases
-
-### 1. Run the default active overview
-
-```bash
-python recon.py --url https://example.com --mode active
-```
-
-This runs DNS, TLS, and HTTP modules. It does not enable crawling or wordlist enumeration.
-
-### 2. Query DNS records only
-
-```bash
-python recon.py --url example.com --mode active --modules dns
-```
-
-Default record types:
+Available checks:
 
 ```text
-A, AAAA, MX, NS, TXT, SOA, CAA, CNAME, HTTPS, SVCB
+registration, subdomains, dns, tls, http, crawl, dns-brute, paths, archive, dorks
 ```
 
-Results include the owner name, record type, answer, TTL, and resolver label.
-
-Record types and resolvers are different concepts. `MX` and `TXT` are record types; `--resolver` selects the DNS server used to query them.
-
-### 3. Query selected DNS record types
+`--only CHECK` selects one starting check. `--modules CHECK,CHECK` selects an
+explicit list. They cannot be used together. Both replace profile defaults;
+explicit convenience flags and wordlist options still add their checks.
 
 ```bash
-python recon.py \
-  --url example.com \
-  --mode active \
-  --modules dns \
-  --dns-types A,AAAA,MX,NS,TXT,SOA,CAA
+python recon.py example.com --modules registration,subdomains,dns,tls,http
 ```
 
-All requested types are queried at the supplied target hostname. Querying `TXT` at `example.com` does not automatically enumerate `_dmarc.example.com` or DKIM selector owners.
+Legacy aliases:
 
-### 4. Compare answers from multiple DNS resolvers
+- `--modules rdap` means `registration`.
+- `--modules ct` means public `subdomains`.
+- `--modules subdomains` with `--dns-wordlist` means `dns-brute` for compatibility.
+  Prefer `--only dns-brute` in new commands.
+- `--mode passive` and `--mode active` remain available. The mode selector is
+  mutually exclusive with `--active` and `--all`.
+
+### DNS record selection and resolvers
 
 ```bash
-python recon.py \
-  --url example.com \
-  --mode active \
-  --modules dns \
-  --resolver 1.1.1.1 \
-  --resolver 8.8.8.8 \
-  --dns-types A,AAAA,MX,TXT
+python recon.py example.com --only dns --dns-types A,AAAA,MX,NS,TXT,SOA,CAA
+python recon.py example.com --only dns --resolver 1.1.1.1 --resolver 8.8.8.8
 ```
 
-Normal DNS enumeration queries each configured resolver. Different answers can have multiple explanations, including cache state or DNS-based routing; differences alone do not prove a problem.
+Use DNS infrastructure approved for your assessment. `--resolver` accepts IPs,
+not HTTPS DNS endpoint URLs. Omit it to use the system resolver configuration.
 
-Omit `--resolver` to use the system resolver configuration. A resolver argument must be an IP address, not a hostname or an HTTPS DNS endpoint.
+The normal DNS module queries each configured resolver. These options affect
+explicit DNS enumeration, not the OS resolution used by HTTP/TLS clients.
+All selected record types are queried at the supplied owner hostname; an apex
+TXT query does not automatically discover DMARC or DKIM selectors.
 
-### 5. Inspect a live TLS certificate
+### Live TLS inspection
 
 ```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --modules tls
+python recon.py https://example.com --only tls
+python recon.py https://your-authorized-host.test:8443 --only tls
 ```
 
-The tool performs a verified TLS handshake and reports the negotiated protocol, cipher, certificate subject/issuer, validity dates, and DNS SAN names.
+Replace the custom-port placeholder with a real authorized service. Reports the
+negotiated protocol/cipher and the verified certificate's subject, issuer,
+validity dates and DNS SANs. SAN names are not automatically probed.
 
-A custom HTTPS port is supported:
+An HTTP target does not trigger an implicit TLS probe. Invalid/untrusted or
+hostname-mismatched certificates fail verification; there is no `--insecure`
+option. This is one verified connection, not a full TLS audit.
+
+### HTTP inspection and public metadata
 
 ```bash
-python recon.py \
-  --url https://example.com:8443 \
-  --mode active \
-  --modules tls
+python recon.py https://example.com --only http
+python recon.py https://example.com --only http --metadata
 ```
 
-TLS verification remains enabled. An expired, untrusted, or hostname-mismatched certificate produces an error. The tool does not silently retry with verification disabled.
+The normal HTTP check fetches only the starting URL. `--metadata` also requests
+`/robots.txt` and `/sitemap.xml` at the origin root. It does not recursively parse
+sitemaps. Each metadata request is independent, so a failed starting request
+does not prevent the additional requested checks from being attempted.
 
-An HTTP target does not cause an implicit TLS probe. Use an explicit HTTPS URL when TLS inspection is intended.
+Headers, generator metadata and common HTML/asset markers supply technology
+hints. They can be absent, misleading or spoofed. Neither a server header nor a
+framework marker establishes that a specific vulnerable version is running.
 
-### 6. Inspect HTTP information and technology hints
+### Same-origin crawling
 
 ```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --modules http
+python recon.py https://example.com --only crawl --max-pages 10 --delay 1
 ```
 
-The module fetches:
+The crawler follows HTML anchors, stays on the exact origin, and does not execute
+JavaScript or submit forms. It skips query-bearing follow-up links, common static
+assets and obvious action paths. Discovered URLs are not necessarily fetched.
+These safeguards do not guarantee that GET requests cannot change state.
 
-- The supplied starting URL.
-- `/robots.txt` at the origin root.
-- `/sitemap.xml` at the origin root.
-
-It reports status, selected response information, page title, redirect destination, and available fingerprint evidence. The readable-output updater summarizes public metadata rather than printing the entire body.
-
-Technology hints come from headers, generator metadata, and framework markers such as WordPress assets or Next.js paths. Hints can be absent, misleading, or spoofed; they are not a complete or verified technology inventory.
-
-### 7. Inspect an explicit HTTP endpoint without TLS
-
-```bash
-python recon.py \
-  --url http://example.com \
-  --mode active \
-  --modules http
-```
-
-Redirects are recorded but not followed. If the server returns an HTTPS redirect, inspect the HTTPS destination in a separate, explicitly authorized run.
-
-### 8. Discover public URLs with a bounded crawl
-
-```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --modules crawl \
-  --max-pages 10 \
-  --delay 1
-```
-
-To add crawling to the active defaults instead:
-
-```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --crawl \
-  --max-pages 10
-```
-
-The crawler discovers same-origin HTML links and inspects fetched pages. Its implementation skips query-bearing follow-up links, common static assets, and obvious action links as a precaution. It is not a JavaScript browser or an authenticated crawler.
-
-Discovered URLs are not necessarily fetched. A crawl page limit does not limit every other module's requests.
-
-### 9. Enumerate DNS subdomain prefixes from a wordlist
+### DNS-prefix wordlist
 
 Create `subdomains.txt`:
 
@@ -532,39 +291,20 @@ Create `subdomains.txt`:
 www
 api
 mail
-vpn
 staging
 ```
 
-Run the wordlist module alone:
-
 ```bash
-python recon.py \
-  --url example.com \
-  --mode active \
-  --modules subdomains \
-  --dns-wordlist subdomains.txt \
-  --max-words 100 \
-  --delay 1
+python recon.py example.com --only dns-brute \
+  --dns-wordlist subdomains.txt --max-words 100 --delay 1
 ```
 
-Or add it to a DNS overview:
+Queries A/AAAA/CNAME beneath the exact URL hostname and performs two random-name
+wildcard checks. `api` beneath `www.example.com` means `api.www.example.com`.
+The first configured resolver is used for this module. Results are candidates;
+wildcard detection is heuristic, not proof that a distinct service exists.
 
-```bash
-python recon.py \
-  --url example.com \
-  --mode active \
-  --modules dns \
-  --dns-wordlist subdomains.txt
-```
-
-Prefixes are appended to the URL hostname. A target of `www.example.com` would produce names such as `api.www.example.com`; use `example.com` if the intended authorized scope is beneath the parent domain.
-
-The implementation queries A, AAAA, and CNAME for wordlist candidates and makes two random-name baseline checks for wildcard DNS. These checks do not prove that a hostname is a real distinct service. When multiple resolvers are supplied, this module uses only the first one.
-
-The wordlist contains prefixes, not full URLs. Empty lines and lines beginning with `#` are ignored.
-
-### 10. Enumerate HTTP paths from a wordlist
+### HTTP-path wordlist
 
 Create `paths.txt`:
 
@@ -576,427 +316,262 @@ health
 about
 ```
 
-Run path checks only:
-
 ```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --modules paths \
-  --path-wordlist paths.txt \
-  --max-words 100 \
-  --delay 1
+python recon.py https://example.com --only paths \
+  --path-wordlist paths.txt --max-words 100 --delay 1
 ```
 
-Or add them to an HTTP overview:
+Paths are relative to the origin root, not the starting path. With a starting
+URL ending in `/app/`, `admin` means `/admin`; use `app/admin` for `/app/admin`.
+The tool makes two random-path soft-404 baseline requests before the list.
+Ordinary 404/410 responses and baseline matches are excluded, but dynamic
+catch-all pages can still produce false positives.
+
+Allowed path characters are letters, digits, `_`, `.`, `/`, `~`, and `-`.
+Parent-directory components are rejected; query strings and arbitrary absolute
+URLs are unsupported. Empty lines and lines starting with `#` are ignored in
+both wordlist types. A candidate status is not proof of exposure or a flaw.
+
+### Wayback URLs
 
 ```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --modules http \
-  --path-wordlist paths.txt
+python recon.py example.com --only archive --archive-limit 500
 ```
 
-Paths are requested from the origin root. With a starting URL of `https://example.com/app/`, the entry `admin` checks `https://example.com/admin`, not `/app/admin`. Use `app/admin` in the wordlist when that is the intended path.
+Retrieves historical URL metadata through CDX. Does not download archived bodies
+or visit the returned live URLs. Historical URLs may be stale or unavailable.
 
-The implementation performs two random-path baseline requests, excludes ordinary 404/410 results, and compares response signatures to reduce obvious soft-404 noise. Dynamic catch-all pages can still produce false positives. Reported paths remain candidates; status 200, 301, or 403 alone is not proof of exposed sensitive information.
-
-Wordlist paths use the implementation's restricted syntax: letters, digits, underscores, dots, slashes, tildes, and hyphens; parent-directory components are rejected. Query strings and arbitrary absolute URLs are not supported.
-
-### 11. Run a broader, explicitly selected active assessment
+### Google dorks and optional search retrieval
 
 ```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --modules dns,tls,http,crawl,subdomains,paths \
-  --dns-wordlist subdomains.txt \
-  --path-wordlist paths.txt \
-  --max-pages 10 \
-  --max-words 100 \
-  --delay 1 \
-  --format jsonl \
-  --output active-full.jsonl
+# Generate queries only.
+python recon.py example.com --only dorks
+
+# Execute the five queries through SerpApi.
+export SERPAPI_KEY='your-api-key'
+python recon.py example.com --only dorks --google-search -o google.jsonl
 ```
 
-This performs substantially more work than the defaults. Confirm every selected module is authorized. Do not interpret `--max-pages 10` as a total of ten HTTP requests: HTTP metadata, wordlist baselines, and path checks add requests.
+PowerShell environment variable syntax:
 
-### 12. Adjust timeouts and response-size limits
+```powershell
+$env:SERPAPI_KEY = 'your-api-key'
+```
+
+Queries cover documents, directory listings, backup/log/SQL extensions,
+admin/login pages, and confidentiality phrases. API calls may consume paid
+quota. Only returned search metadata is recorded; discovered documents are not
+downloaded. Full result pagination is not implemented. A search hit is a lead
+for authorized review, not a confirmed sensitive-data exposure.
+
+### Provider selection and cache controls
 
 ```bash
-python recon.py \
-  --url https://example.com \
-  --mode active \
-  --modules http \
-  --timeout 30 \
-  --delay 1 \
-  --max-bytes 2000000
+python recon.py github.com --only subdomains --subdomain-source crtsh
+python recon.py github.com --only subdomains --provider-timeout 45 --retries 0
+python recon.py example.com --no-cache
+python recon.py www.example.co.uk --domain example.co.uk
 ```
 
-Here, individual operations use a 30-second timeout and body reads are limited to 2 MB. A larger delay reduces the frequency of operations but does not impose a strict network-packet budget.
+`auto` normally selects crt.name, then crt.sh. crt.name is skipped when its apex
+lookup would broaden a tenant/narrow-domain discovery scope. Explicitly forcing
+that source in an unsupported scope reports unavailable instead of widening it.
+The sources differ in coverage and metadata; neither guarantees completeness.
 
-The same timeout/body-size controls apply to passive provider HTTP requests. For example, a large CT response may require a larger body cap:
+`--domain` changes passive discovery scope, not the registrable domain used for
+RDAP or the direct HTTP origin. It must equal or be a parent of the input host.
+The bundled suffix list is used without a runtime suffix-list download, but can
+age; update the dependency to obtain a newer bundled snapshot.
+
+### Structured filtering
+
+Requires separately installed `jq`:
 
 ```bash
-python recon.py \
-  --url example.com \
-  --modules ct \
-  --timeout 30 \
-  --max-bytes 20000000
+# Public subdomain names.
+python recon.py example.com --json \
+  | jq -r 'select(.type == "subdomain") | .name' | sort -u
+
+# DNS answers.
+python recon.py example.com --only dns --json \
+  | jq -r 'select(.type == "dns_record") | [.name, .value.rrtype, .value.value] | @tsv'
+
+# Historical URLs.
+python recon.py example.com --only archive --json \
+  | jq -r 'select(.type == "archived_url") | .value.url' | sort -u
+
+# Crawl-discovered URLs.
+python recon.py https://example.com --only crawl --json \
+  | jq -r 'select(.type == "public_url") | .name' | sort -u
+
+# Provider/check warnings.
+python recon.py example.com --json \
+  | jq -r 'select(.type == "warning" or .type == "error") | [.source, .value.message] | @tsv'
+
+# Status of each completed/attempted check.
+python recon.py example.com --json \
+  | jq -r 'select(.type == "check_status") | [.source, .value.status] | @tsv'
 ```
 
-Increasing a cap does not guarantee a provider will complete the request or return exhaustive results.
-
-## Readable output and colors
-
-The default `pretty` format uses category headings and wrapping tables, with no raw record prefixes or per-record timestamps. `text` is a compatibility alias for that presentation.
-
-| Category | Color in the output updater |
-| --- | --- |
-| Domain registration | Cyan |
-| Subdomain names / DNS wordlist candidates | Magenta |
-| DNS records | Bright blue |
-| TLS | Green |
-| HTTP | Yellow |
-| Technology hints | Bright green |
-| Crawled public URLs | Bright cyan |
-| Path candidates | Bright red |
-| Wayback archive | Grey |
-| Google dorks | Orange |
-| Errors | Red |
-
-Colors default to automatic detection: enabled in an interactive terminal, disabled for redirected/file output. The updater's automatic mode respects `NO_COLOR` and `TERM=dumb`. Explicit `--color always` overrides auto detection. Actual shades depend on terminal support.
-
-```bash
-# Automatic colors.
-python recon.py --url example.com
-
-# Force colors when needed.
-python recon.py --url example.com --color always
-
-# Disable all readable-output colors.
-python recon.py --url example.com --no-color
-
-# Display more rows without changing the amount collected.
-python recon.py --url example.com --modules ct --display-limit 100
-
-# Opt in to raw diagnostic records.
-python recon.py --url example.com --verbose
-```
-
-Readable tables may wrap long values across multiple terminal lines. Use JSONL or TSV when reliable record-by-record parsing matters.
-
-## Saving, filtering, and automation
-
-### Save a readable report
-
-```bash
-python recon.py --url example.com --no-color --output report.txt
-```
-
-Files are overwritten, not appended. The scanner does not create an automatic backup of result files; the updater's source-code backup is a separate feature.
-
-### Export JSONL
-
-```bash
-python recon.py --url example.com --format jsonl --output passive.jsonl
-```
-
-JSONL contains one JSON object per line. Human display limits do not truncate structured exports. Collection limits such as `--archive-limit` and `--max-words` still apply.
-
-Top-level fields:
+JSONL has one JSON object per line, not one JSON array. Top-level fields are:
 
 | Field | Meaning |
 | --- | --- |
-| `time` | UTC event timestamp. |
-| `mode` | Selected passive or active mode. |
-| `target` | Target hostname. |
-| `source` | Collector/provider label. |
-| `type` | Record category, such as `dns_record` or `subdomain`. |
-| `name` | Host, URL, or other item associated with the record. |
-| `value` | A string or structured object containing the finding. |
+| `time` | UTC timestamp. |
+| `mode` | `passive`, `active`, or `mixed`, based on selected checks. |
+| `target` | Input hostname. |
+| `source` | Module/provider label. |
+| `type` | Finding/status category. |
+| `name` | Associated domain, URL, or item. |
+| `value` | String or structured evidence object. |
 
-Structured output also includes scope, error, and summary records. Filter on `type` rather than assuming every line is a finding. Nested evidence keys can differ between the earlier v1/v2 collection implementations; inspect a record before building a new parser.
+Exports include scope, notices, warnings/errors, check statuses and a final
+summary. Filter by `type` instead of assuming every record is a finding.
+TSV uses the same seven columns and escapes control characters; structured
+values are serialized in its last column. Human tables can wrap across lines.
 
-### Export TSV
-
-```bash
-python recon.py \
-  --url example.com \
-  --mode active \
-  --modules dns \
-  --format tsv \
-  --output dns.tsv
-```
-
-TSV has a header and the same seven top-level columns. Structured values are serialized in the final column; control characters are escaped to preserve row boundaries.
-
-JSONL and TSV never include ANSI color sequences, even with `--color always`.
-
-### Extract certificate-derived names
-
-Requires `jq`:
+For plain filtering:
 
 ```bash
-python recon.py --url example.com --modules ct --format jsonl \
-  | jq -r 'select(.type == "subdomain") | .name' \
-  | sort -u
+python recon.py example.com --no-color | grep -F example.com
 ```
 
-Save the name list:
+In Bash, use `set -o pipefail` if scanner failures must propagate through a
+pipeline rather than being hidden by the final program's exit status.
 
-```bash
-python recon.py --url example.com --modules ct --format jsonl \
-  | jq -r 'select(.type == "subdomain") | .name' \
-  | sort -u > discovered-hostnames.txt
-```
+## Complete option reference
 
-This does not authorize scanning those names or automatically add them to active scope.
+| Option | Purpose / default |
+| --- | --- |
+| `target` | Positional domain or HTTP(S) URL. |
+| `-u`, `--url` | Compatible option-based target. Conflicting targets are rejected. |
+| `-h`, `--help` | Short help. |
+| `--help-all` | Full help without a target requirement. |
+| `-a`, `--active` | Direct DNS/TLS/HTTP profile. |
+| `--all` | Passive + active profiles; no extra crawling/archive/wordlists. |
+| `-m`, `--mode` | Legacy `passive`/`active` profile selector. |
+| `--only` | One check, replacing profile defaults. |
+| `--modules` | Explicit comma-separated check list. |
+| `--archive` | Add archive metadata lookup. |
+| `--dorks` | Add local Google query generation. |
+| `--crawl` | Add direct same-origin crawling. |
+| `--metadata` | Add HTTP plus origin-root robots/sitemap fetches. |
+| `--domain` | Override passive discovery-domain scope. |
+| `-o`, `--output` | Output file; overwritten if it exists. |
+| `--json` | Select JSONL output. |
+| `-f`, `--format` | `pretty`, `text`, `jsonl`, `tsv`; inferred if omitted. `text` is a readable-output alias. |
+| `--color` | `auto` (default), `always`, `never`; machine formats never include ANSI. |
+| `--no-color` | Disable readable-output colors. |
+| `-v`, `--verbose` | Raw evidence and additional provider diagnostics. |
+| `--display-limit` | Maximum visible rows per table; default `30`. |
+| `--timeout` | Direct-target operation timeout; default `15` seconds. |
+| `--provider-timeout` | Provider read timeout; default `30` seconds. Provider connection timeout is at most `10` seconds. |
+| `--retries` | Extra provider attempts; default `1`, allowed `0`â€“`3`. |
+| `--delay` | Minimum delay between operations; default `0.5` seconds. |
+| `--max-bytes` | HTTP body-read cap; default `30000000` bytes (30 MB decimal). |
+| `--no-cache` | Disable fresh/stale provider-cache reads and writes. |
+| `--cache-dir` | `$XDG_CACHE_HOME/easyrecon`, otherwise `~/.cache/easyrecon`. |
+| `--subdomain-source` | `auto`, `crtname`, or `crtsh`; default `auto`. |
+| `--resolver` | Repeatable DNS resolver IP; default system configuration. |
+| `--dns-types` | Default `A,AAAA,MX,NS,TXT,SOA,CAA,CNAME,HTTPS,SVCB`. |
+| `--dns-wordlist` | Local prefix list; enables `dns-brute`. |
+| `--path-wordlist` | Local path list; enables `paths`. |
+| `--max-words` | Wordlist entries processed per list; default `100`. |
+| `--max-pages` | Crawl fetches; default `10`, not a whole-run request limit. |
+| `--archive-limit` | Archive rows requested; default `200`. |
+| `--google-search` | Execute queries using `SERPAPI_KEY`; may consume paid quota. |
 
-### Extract DNS answers
+## Caching and retries
 
-```bash
-python recon.py --url example.com --mode active --modules dns --format jsonl \
-  | jq -r 'select(.type == "dns_record") | [.name, .value.rrtype, .value.value] | @tsv'
-```
+- Successful provider responses are fresh for six hours.
+- Registration and public-subdomain checks can use cached data up to seven days
+  old after live attempts fail. Its age is displayed, it is not live-verified,
+  and the check is marked `partial` rather than fresh success.
+- Archive lookup uses fresh caching but does not have a stale-data fallback.
+- Google search retrieval is not cached; API keys are not written into entries.
+- Cache files are created with mode `0600` and new directories with `0700`,
+  subject to platform behavior. Existing-directory permissions are not rewritten.
+- Cache storage is not encrypted. Use `--no-cache` where appropriate.
+- Default provider behavior is at most two attempts per request: initial request
+  plus one retry. Fallback providers can add separate requests.
+- Retries cover transient request failures and HTTP 408/429/500/502/503/504.
+  Ordinary HTTP 400/403/404 requests are not repeated unchanged.
+- Recognized `Retry-After` values are respected within the short retry budget.
+  A wait over 15 seconds skips that service for the current attempt/run path
+  rather than retrying early. A different fallback provider may still be tried.
+- `--retries 0` disables extra attempts, not fallback sources.
+- Per-operation timeouts are not whole-run deadlines; streaming data, redirects,
+  multiple sources, retries and DNS resolution can extend elapsed time.
 
-### Extract historical URLs
+</details>
 
-```bash
-python recon.py --url example.com --modules archive --format jsonl \
-  | jq -r 'select(.type == "archived_url") | .value.url' \
-  | sort -u
-```
+## Scope and operational limits
 
-### Extract crawl-discovered URLs
-
-```bash
-python recon.py --url https://example.com --mode active --modules crawl --format jsonl \
-  | jq -r 'select(.type == "public_url") | .name' \
-  | sort -u
-```
-
-### Extract path candidates
-
-```bash
-python recon.py --url https://example.com --mode active --modules paths \
-  --path-wordlist paths.txt --format jsonl \
-  | jq -r 'select(.type == "path_candidate") | [.name, .value.status] | @tsv'
-```
-
-### Extract Google result links
-
-With `SERPAPI_KEY` configured:
-
-```bash
-python recon.py --url example.com --modules dorks --google-search --format jsonl \
-  | jq -r 'select(.type == "search_result") | .value.url'
-```
-
-### Filter errors
-
-```bash
-python recon.py --url example.com --format jsonl \
-  | jq -r 'select(.type == "error") | [.source, .name, .value.message] | @tsv'
-```
-
-### Use grep
-
-```bash
-python recon.py --url example.com --no-color | grep -F example.com
-```
-
-For record-based filtering, prefer TSV or JSONL over wrapping human tables:
-
-```bash
-python recon.py --url example.com --mode active --modules dns --format tsv \
-  | grep -F dns_record
-```
-
-### Preserve scanner exit status in a Bash pipeline
-
-```bash
-set -o pipefail
-python recon.py --url example.com --format jsonl \
-  | jq -r 'select(.type == "subdomain") | .name'
-```
-
-Otherwise, the status of the final pipeline program can hide a scanner error. A run may produce useful partial results and still exit nonzero.
-
-## Scope and safety
-
-### Passive lookup scope
-
-`--domain` controls passive domain lookups. Without it, the URL hostname is used exactly. Third-party providers can see these queries, and provider-side redirects may occur for registration lookup routing.
-
-### Active HTTP scope
-
-Active HTTP remains on the exact origin supplied:
-
-```text
-https://example.com:8443
-```
-
-That does not include:
-
-```text
-http://example.com:8443
-https://example.com
-https://www.example.com:8443
-https://other.example.com:8443
-```
-
-Redirects are reported but never followed by active HTTP requests, including redirects that stay on the same origin. Use a separate explicit run for another authorized origin.
-
-A path is not a scope boundary. `--url https://example.com/app/` does not constrain every request to `/app/`.
-
-### Active DNS scope
-
-Normal DNS queries use the target hostname. Wordlist enumeration checks explicitly requested child prefixes beneath that hostname.
-
-Certificate names, CT names, archived URLs, and search results do not automatically expand active scope. A TLS SAN outside your intended scope is informational, not permission to probe it.
-
-### Request volume and side effects
-
-- Modules operate sequentially, without parallel workers.
-- Delay applies between operations, not every packet. DNS retries, address resolution, and provider redirects can generate extra traffic.
-- Crawl limits apply only to crawling; other modules add their own requests.
-- Selecting both `http` and `crawl` fetches the starting page twice in these implementations.
-- Path checks add two random baseline requests before wordlist requests.
-- DNS wordlist checks add random-name baselines and query multiple record types per entry.
-- A timeout is not a whole-run deadline; repeated operations or slow streamed responses can make a run longer.
-- Even GET requests can change state on poorly designed applications. Avoid production targets unless your authorization explicitly permits the assessment.
-
-### Protect collected data
-
-Raw headers, RDAP objects, archived query parameters, and search snippets can contain personal or confidential information. Store outputs securely and do not publish them or commit them to a public repository without review.
-
-## Limitations and interpretation
-
-- CT names and archived URLs can be historical, incomplete, or stale.
-- A certificate wildcard does not prove individual hosts exist.
-- Search results are leads, not confirmed data exposure.
-- Technology hints are heuristic and do not establish a complete inventory or exact vulnerable version.
-- Wildcard DNS, load-balanced responses, and dynamic soft-404 pages can produce ambiguous candidates.
-- HTTP status codes alone do not establish endpoint existence, confidentiality, or exploitability.
-- TLS inspection is one verified connection, not a cipher-suite audit or exhaustive TLS vulnerability assessment.
-- The crawler does not execute JavaScript, log in, submit forms, or fully reproduce a browser.
-- Public metadata is fetched but the tool is not a recursive sitemap discovery engine.
-- DNS queries do not perform a zone transfer or automatically discover every DNS owner name.
-- The URL-oriented hostname validation does not support underscore-bearing owners for dedicated DMARC/DKIM/SRV-owner queries. DKIM selector discovery is not implemented.
-- The tool does not perform port scans, exploit vulnerabilities, attempt passwords, or bypass authentication.
-- Response body reads are capped, but there is no comprehensive whole-run memory or total-result cap for large CT datasets.
-- Provider availability, rate limits, account quota, and data quality are outside the tool's control.
-- HTTP environment proxies are disabled by the collection implementation; environment proxy variables are not a supported routing control.
+- Active HTTP stays on the exact input scheme, hostname and port.
+- Redirects are reported but never followed by active requests, including
+  same-origin redirects. Inspect another authorized origin in a separate run.
+- A starting path is not a scope boundary: crawling, metadata and wordlists can
+  access other paths on the same origin.
+- Discovered CT/index names, archived URLs, search results and certificate SANs
+  never automatically become new active targets.
+- Provider-side registration-routing redirects are permitted for passive lookups.
+- Requests are sequential, but DNS retries, OS resolution and provider redirects
+  can generate additional traffic. Delay is not a packet-rate limit.
+- `--max-pages` limits only crawl fetches. Metadata, TLS and path/wordlist checks
+  add operations; selecting both HTTP and crawl fetches the starting page twice.
+- GET requests can cause side effects on poorly designed applications. Prefer a
+  lab or staging environment and use only checks your authorization permits.
+- There is no JavaScript browser, authenticated crawl, port scanner, password
+  attack, exploitation engine, zone transfer, or recursive sitemap discovery.
+- URL-oriented hostname input does not support underscore-bearing DNS owners
+  for dedicated DMARC/DKIM/SRV-owner queries. DKIM selector discovery is absent.
+- Response bodies are capped, but there is no comprehensive whole-run memory or
+  total-finding limit. Large public-domain datasets may take substantial time.
+- HTTP environment proxy settings are disabled by the script. Private-CA setups
+  need deliberate trust-store/code configuration; verification is not bypassed.
+- Protect cache/report data: raw registration records, headers/cookies, archived
+  query parameters and search snippets may contain personal or confidential data.
 
 ## Troubleshooting
 
-These checks describe this implementation's behavior; they are not a guarantee that a provider or target will be reachable.
-
-### Missing Python dependency
-
-Install the supplied dependencies with the same interpreter used to run the scanner:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-The virtual environment's interpreter avoids confusion between multiple installations:
-
-```bash
-.venv/bin/python recon.py -h
-```
-
-### No colors
-
-Redirected output and files are colorless by default. Check an explicit forced-color run:
-
-```bash
-python recon.py --url example.com --color always
-```
-
-Machine formats intentionally never include colors. In automatic mode, `NO_COLOR`, a dumb terminal, or noninteractive stdout disables colors.
-
-### Too many or too few visible rows
-
-Use `--display-limit` to change presentation:
-
-```bash
-python recon.py --url example.com --modules ct --display-limit 100
-```
-
-For complete collected records, use JSONL. A larger display limit does not increase provider collection limits.
-
-### Wayback or dorks are appearing unexpectedly
-
-Inspect the command for `--archive`, `--dorks`, `--google-search`, or a `--modules` list containing `archive`/`dorks`. If a default invocation still includes them, confirm you are running the updated script rather than an older copy.
-
-### RDAP fails for a subdomain
-
-A subdomain may not have its own registration object. Supply the authorized registrable domain explicitly:
-
-```bash
-python recon.py --url www.example.co.uk --domain example.co.uk --modules rdap
-```
-
-### Google queries appear but no results are retrieved
-
-`--dorks` generates queries only. Actual retrieval requires `--google-search` and `SERPAPI_KEY`:
-
-```bash
-export SERPAPI_KEY='your-api-key'
-python recon.py --url example.com --modules dorks --google-search
-```
-
-An empty result list can also mean the provider returned no matching organic results; it does not prove no relevant content exists.
-
-### Provider timeout or response-size error
-
-A focused retry can use a larger operation timeout/body limit:
-
-```bash
-python recon.py --url example.com --modules ct --timeout 30 --max-bytes 20000000
-```
-
-This does not bypass service limits. Avoid tight retry loops and respect provider responses.
-
-### Certificate validation error
-
-The scanner does not bypass verification. Check that the hostname and HTTPS port are correct and that the target certificate/trust setup is valid. Private-CA environments need a deliberate trust-store/code configuration change; there is no supported `--insecure` flag.
-
-### Redirect destination is not inspected
-
-That is intentional. Inspect the destination only in a separate run after confirming it is authorized:
-
-```bash
-python recon.py --url https://example.com --mode active --modules http
-```
-
-### Empty DNS result
-
-No A, AAAA, CNAME, or other requested record at a particular owner can be a normal result. It does not necessarily indicate a scanner failure. `--verbose` or JSONL shows individual empty-answer records.
-
-### Wordlist file not found
-
-Wordlist paths are relative to the current working directory unless absolute paths are supplied:
-
-```bash
-python recon.py --url example.com --mode active --modules subdomains \
-  --dns-wordlist ./wordlists/subdomains.txt
-```
-
-### Invalid module selection
-
-Use only passive modules in passive mode and only active modules in active mode. The `subdomains` and `paths` modules require their corresponding wordlist arguments.
+| Symptom | What to check |
+| --- | --- |
+| `ModuleNotFoundError` or dependency validation error | Activate the environment and run `python -m pip install -r requirements.txt` with the same interpreter. |
+| Old `KeyError: None` on `a.color` | Use the supplied definitive 4.1 script. It sets the parser default after registering both color flags and also handles `None` defensively in the reporter. |
+| Registration error for a `www` host | Confirm the banner's Registration field is the registrable domain, not `www`. The old script may still be running. |
+| Provider unavailable | Other checks continue; retry later, select another source, or inspect `--verbose`. No option guarantees service availability. |
+| Read timeout on a custom port | Verify the application actually serves that scheme/port/path. Increasing timeout does not create an unavailable endpoint. |
+| Redirect destination not inspected | Intentional scope restriction. Run a separate authorized request to the destination. |
+| No terminal colors | Check `--color always`; machine formats intentionally remain colorless. |
+| Only 30 rows visible | Use `--display-limit` or structured export; collection limits are separate. |
+| Google queries but no results | `--dorks` generates only. Execution needs `--google-search` and `SERPAPI_KEY`. |
+| Cached/stale evidence appears | Review its status and age. Use `--no-cache` to disable all cache use. |
+| TLS validation fails | Check hostname, port, certificate and trust configuration. No insecure retry is performed. |
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Completed without recorded module errors. Does not mean the target is secure or enumeration was exhaustive. |
-| `1` | One or more module errors; partial results may still be useful. |
-| `2` | Command-line validation or dependency validation error. |
-| `130` | Interrupted by the user. |
+| `0` | Selected checks completed, including recovered fallbacks or fresh cache. Not proof of security or exhaustive coverage. |
+| `1` | At least one check is unavailable, partial or failed; useful partial results can still exist. |
+| `2` | Argument, dependency, or input validation error. |
+| `130` | User interruption. |
 
-Ordinary empty DNS answers are not module errors. The original script also handles a closed output pipe as a normal termination case.
+Normal empty DNS answers are not module errors. A closed output pipe is handled
+as normal termination. Inspect check-status records when using pipelines.
+
+## Validation and project files
+
+The supplied definitive script passed syntax validation and seven regression
+cases for color-option parsing. That validates the reported startup fix; it is
+not full live integration testing. Provider availability was not re-tested.
+
+The earlier 4.0 package's offline test results should not be described as a full
+verified test suite for every change in 4.1. If reusing an older `test_recon.py`,
+review its expectations and constants before treating it as authoritative.
+
+Required runtime files are the Python script and its installed dependencies.
+`requirements.txt` installs those dependencies; this README explains usage.
+The `.txt` delivery is the same script content and must be saved/renamed with a
+`.py` extension for the commands above. No updater or test script is required
+for normal execution.
