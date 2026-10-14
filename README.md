@@ -1,10 +1,8 @@
-# ScopedRecon
+# osintpy
 
 A Python command-line tool for authorized passive and active website reconnaissance, with readable, color-coded terminal output and structured exports for automation.
 
 > Only assess domains, hosts, and applications that you own or have explicit permission to test. A domain appearing in a public database does not grant authorization to scan it.
-
-This README documents the scanner supplied in this conversation after the readable-output update. The standalone script is `recon.py`; `update_recon.py` is only the updater, not the scanner.
 
 ## Contents
 
@@ -26,7 +24,7 @@ This README documents the scanner supplied in this conversation after the readab
 
 ## What the tool does
 
-ScopedRecon collects domain and website information through independent modules.
+osintpy collects domain and website information through independent modules.
 
 | Capability | Mode | Module | Enabled by default? |
 | --- | --- | --- | --- |
