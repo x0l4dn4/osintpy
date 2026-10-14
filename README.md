@@ -1,18 +1,6 @@
-Simple website reconnaissance with readable, color-coded output, third-party
-information sources, and optional direct-target checks.
+Simple website reconnaissance with readable, color-coded output, third-party information sources, and optional direct-target checks.
 
-> Only run active checks against targets you own or have explicit permission to
-> assess. Discovering a hostname does not authorize scanning it.
-
-## Start here
-
-### 1. Prepare the files
-
-Save the supplied plain-text script as `recon.py`, and keep `requirements.txt`
-in the same directory. If you named the script `recon2.py`, substitute that name
-in the commands below. The script must contain Python code, not Markdown fences.
-
-### 2. Install
+### Install
 
 Use Python 3.10 or newer. In the project directory:
 
@@ -22,7 +10,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-### 3. Run
+### 2. Run
 
 ```bash
 # Passive: registration information and public subdomain candidates.
@@ -68,7 +56,7 @@ python recon.py -u example.com
 No API key is needed for normal passive or active checks. Only optional Google
 result retrieval needs `SERPAPI_KEY`.
 
-## What runsâ€”and what does not
+## What runs and what does not
 
 | Profile | Checks included |
 | --- | --- |
@@ -163,25 +151,7 @@ Provider availability cannot be guaranteed. Timeouts and HTTP errors are not
 silently converted into successful empty results. A failed target request says
 that the check is incomplete rather than claiming there were no findings.
 
-## Requirements
-
-```text
-requests>=2.32,<3
-dnspython>=2.6,<3
-tldextract>=5.1,<6
-rich>=13.7,<15
-```
-
-| Package | Used for |
-| --- | --- |
-| `requests` | Provider and target HTTP requests. |
-| `dnspython` | Explicit DNS enumeration and DNS-prefix wordlists. |
-| `tldextract` | Registrable-domain and private-suffix scope handling. |
-| `rich` | Readable terminal tables, colors, and progress indicators. |
-
-TLS uses Python's built-in `ssl` module. `cryptography`, `gobuster`, `dnsrecon`,
-and `nslookup` are not required by this version. `jq` is optional for the filtering
-examples below. Dependency ranges are not a fully pinned environment lockfile.
+## Windows
 
 On Windows PowerShell, create and activate the environment with:
 
@@ -560,18 +530,3 @@ pipeline rather than being hidden by the final program's exit status.
 Normal empty DNS answers are not module errors. A closed output pipe is handled
 as normal termination. Inspect check-status records when using pipelines.
 
-## Validation and project files
-
-The supplied definitive script passed syntax validation and seven regression
-cases for color-option parsing. That validates the reported startup fix; it is
-not full live integration testing. Provider availability was not re-tested.
-
-The earlier 4.0 package's offline test results should not be described as a full
-verified test suite for every change in 4.1. If reusing an older `test_recon.py`,
-review its expectations and constants before treating it as authoritative.
-
-Required runtime files are the Python script and its installed dependencies.
-`requirements.txt` installs those dependencies; this README explains usage.
-The `.txt` delivery is the same script content and must be saved/renamed with a
-`.py` extension for the commands above. No updater or test script is required
-for normal execution.
