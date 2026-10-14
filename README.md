@@ -20,7 +20,6 @@ A Python command-line tool for authorized passive and active website reconnaissa
 - [Limitations and interpretation](#limitations-and-interpretation)
 - [Troubleshooting](#troubleshooting)
 - [Exit codes](#exit-codes)
-- [Files and testing](#files-and-testing)
 
 ## What the tool does
 
@@ -1001,26 +1000,3 @@ Use only passive modules in passive mode and only active modules in active mode.
 | `130` | Interrupted by the user. |
 
 Ordinary empty DNS answers are not module errors. The original script also handles a closed output pipe as a normal termination case.
-
-## Files and testing
-
-| File | Purpose |
-| --- | --- |
-| `recon.py` | The scanner. Run this for enumeration. |
-| `requirements.txt` | Scanner dependencies. |
-| `README.md` | This documentation. |
-| `update_recon.py` | Applies the readable-output/default-module update to an earlier copy and creates a backup. Not used for scans. |
-| `test_recon.py` | Optional development tests if included with your scanner package. Not needed for ordinary use. |
-
-The readable-output updater was checked using 14 offline compatibility/presentation checks against representative earlier-version fixtures. These covered opt-in defaults, module overrides, color behavior, JSONL/TSV formatting, argument validation, backup creation, repeated updates, and v2-style hooks.
-
-Those checks did not scan a live website or establish current provider availability. The older `test_recon.py` files were written for their original output implementations; Reporter-interface and default-selection assertions may need updating after applying the output updater. Do not treat an old test suite as a verified post-update regression suite without reviewing it.
-
-## Recommended minimal workflow
-
-1. Confirm the authorized host/domain scope.
-2. Run passive defaults and export JSONL if you need durable evidence.
-3. Review discovered names without automatically expanding scope.
-4. Run the active DNS/TLS/HTTP overview only on authorized targets.
-5. Add archive, search, crawling, or wordlist modules only for a specific purpose.
-6. Review candidates manually and protect the resulting files.
