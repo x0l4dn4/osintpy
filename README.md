@@ -10,7 +10,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-### 2. Run
+### Run
 
 ```bash
 # Passive: registration information and public subdomain candidates.
