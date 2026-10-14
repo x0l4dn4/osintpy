@@ -82,33 +82,237 @@ def under(name, domain):
 
 
 class Reporter:
-    def __init__(self, fmt, filename, mode, target):
-        self.fmt, self.mode, self.target = fmt, mode, target
-        self.stream = open(filename, 'w', encoding='utf-8') if filename else sys.stdout
-        self.owned = bool(filename)
-        self.counts = Counter()
-        if fmt == 'tsv':
+    """Human-readable presentation; stable JSONL/TSV for automation."""
+    COLORS = {'registration': '36', 'subdomains': '35', 'dns': '94', 'tls': '32',
+              'http': '33', 'technologies': '92', 'crawl': '96', 'paths': '91',
+              'archive': '90', 'dorks': '38;5;208', 'errors': '31', 'notes': '37'}
+    LABELS = {'registration': 'DOMAIN REGISTRATION', 'subdomains': 'SUBDOMAINS',
+              'dns': 'DNS RECORDS', 'tls': 'TLS CERTIFICATE', 'http': 'HTTP OVERVIEW',
+              'technologies': 'TECHNOLOGY HINTS', 'crawl': 'PUBLIC URLS',
+              'paths': 'PATH CANDIDATES', 'archive': 'WAYBACK — OPT-IN',
+              'dorks': 'GOOGLE DORKS — OPT-IN', 'errors': 'ERRORS', 'notes': 'NOTES'}
+
+    def __init__(self, a, target):
+        import collections, os, shutil, sys
+        self.a, self.target, self.mode = a, target, a.mode
+        self.fmt = a.format
+        self.human = self.fmt in ('pretty', 'text')
+        self.owned = bool(a.output)
+        self.stream = open(a.output, 'w', encoding='utf-8') if a.output else sys.stdout
+        self.counts = collections.Counter()
+        self.pending = []
+        self.current = None
+        self.last_heading = None
+        self.started = False
+        self.finished = False
+        self.width = max(60, min(150, shutil.get_terminal_size((110, 24)).columns))
+        color = getattr(a, 'color', 'auto')
+        self.color = self.human and (color == 'always' or
+            (color == 'auto' and self.stream.isatty() and 'NO_COLOR' not in os.environ and os.environ.get('TERM') != 'dumb'))
+        if self.fmt == 'tsv':
             self.stream.write('time\tmode\ttarget\tsource\ttype\tname\tvalue\n')
 
+    @staticmethod
+    def safe(value):
+        import re
+        if value is None:
+            return '—'
+        text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', str(value))
+        return ''.join(c if ord(c) >= 32 and not 127 <= ord(c) <= 159 else ' ' for c in text)
+
+    def line(self, value='', category=None, bold=False):
+        text = self.safe(value)
+        if self.color and category:
+            code = self.COLORS[category]
+            text = '\033[' + ('1;' if bold else '') + code + 'm' + text + '\033[0m'
+        self.stream.write(text + '\n')
+
+    def heading(self, category):
+        if self.last_heading != category:
+            self.line()
+            title = self.LABELS[category]
+            self.line('── ' + title + ' ' + '─' * max(2, self.width - len(title) - 5), category, True)
+            self.last_heading = category
+
+    def banner(self, url, modules):
+        if self.human and not self.started:
+            self.line('SCOPED RECON', 'notes', True)
+            self.line('Target   ' + self.safe(url))
+            self.line('Mode     ' + self.mode)
+            self.line('Modules  ' + ', '.join(modules))
+            self.started = True
+
+    def begin(self, module):
+        self.current = module
+        if self.human:
+            category = {'rdap': 'registration', 'ct': 'subdomains', 'subdomains': 'subdomains'}.get(module, module)
+            if category in self.LABELS:
+                self.heading(category)
+
     def emit(self, source, kind, name, value):
-        record = dict(time=datetime.now(timezone.utc).isoformat(), mode=self.mode,
-                      target=self.target, source=source, type=kind, name=name, value=value)
+        import datetime, json
+        record = {'time': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'mode': self.mode,
+                  'target': self.target, 'source': source, 'type': kind, 'name': name, 'value': value}
         self.counts[kind] += 1
-        if self.fmt == 'jsonl':
-            line = json.dumps(record, ensure_ascii=True, separators=(',', ':'))
+        if not self.human:
+            if self.fmt == 'jsonl':
+                self.stream.write(json.dumps(record, ensure_ascii=True) + '\n')
+            else:
+                def cell(v):
+                    s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=True)
+                    return ''.join(c if ord(c) >= 32 and not 127 <= ord(c) <= 159 else f'\\x{ord(c):02x}'
+                                   for c in s.replace('\\', '\\\\'))
+                self.stream.write('\t'.join(cell(record[k]) for k in
+                    ('time', 'mode', 'target', 'source', 'type', 'name', 'value')) + '\n')
+            self.stream.flush()
+            return
+        if kind == 'scope':
+            self.banner(value.get('url', self.target), value.get('modules', []))
+        elif kind == 'summary':
+            self.flush()
+            self.end(value.get('errors', self.counts['error']), value.get('interrupted', False))
         else:
-            fields = [str(record[k]) if isinstance(record[k], str) else json.dumps(record[k], ensure_ascii=True)
-                      for k in ('time', 'mode', 'target', 'source', 'type', 'name', 'value')]
-            fields = [s.replace('\\', '\\\\').replace('\t', '\\t').replace('\r', '\\r').replace('\n', '\\n')
-                      for s in fields]
-            # Escape terminal controls from untrusted remote input.
-            fields = [''.join(c if ord(c) >= 32 and ord(c) != 127 else f'\\x{ord(c):02x}' for c in s)
-                      for s in fields]
-            line = '\t'.join(fields) if self.fmt == 'tsv' else ' | '.join(fields[3:])
-        self.stream.write(line + '\n')
+            self.pending.append(record)
+
+    def table(self, category, headers, rows):
+        import textwrap
+        if not rows:
+            return
+        self.heading(category)
+        limit = getattr(self.a, 'display_limit', 30)
+        data = [[self.safe(v) for v in row] for row in rows[:limit]]
+        widths = [max(len(h), min(65, max((len(row[i]) for row in data), default=0))) for i, h in enumerate(headers)]
+        budget = self.width - (3 * len(headers) + 1)
+        while sum(widths) > budget:
+            i = max(range(len(widths)), key=lambda i: widths[i])
+            if widths[i] <= 7:
+                break
+            widths[i] -= 1
+        border = lambda left, middle, right: left + middle.join('─' * (w + 2) for w in widths) + right
+        self.line(border('╭', '┬', '╮'), category)
+        self.line('│ ' + ' │ '.join(h.ljust(w) for h, w in zip(headers, widths)) + ' │', category, True)
+        self.line(border('├', '┼', '┤'), category)
+        for row in data:
+            lines = [textwrap.wrap(v, width=w, break_long_words=True, break_on_hyphens=False) or [''] for v, w in zip(row, widths)]
+            for j in range(max(map(len, lines))):
+                self.line('│ ' + ' │ '.join((parts[j] if j < len(parts) else '').ljust(w)
+                          for parts, w in zip(lines, widths)) + ' │')
+        self.line(border('╰', '┴', '╯'), category)
+        if len(rows) > limit:
+            self.line(f'  Showing {limit} of {len(rows)} rows. Increase --display-limit or export JSONL/TSV.', category)
+
+    def flush(self):
+        import json
+        if not self.human:
+            return
+        rows, self.pending = self.pending, []
+        by = lambda kind: [r for r in rows if r['type'] == kind]
+        rendered = False
+        def table(category, headers, values):
+            nonlocal rendered
+            values = list(values)
+            if values:
+                rendered = True
+                self.table(category, headers, values)
+        for r in by('registration'):
+            d = r['value']
+            registrar = 'Not disclosed'
+            for e in d.get('entities', []):
+                if 'registrar' in e.get('roles', []):
+                    registrar = e.get('handle', registrar)
+                    card = e.get('vcardArray') or [None, []]
+                    for v in card[1] if len(card) > 1 else []:
+                        if len(v) > 3 and v[0] == 'fn':
+                            registrar = v[3]
+            fields = [('Domain', d.get('ldhName', r['name'])), ('Registrar', registrar),
+                      ('Status', ', '.join(d.get('status', [])) or 'Not disclosed')]
+            fields += [(e.get('eventAction', 'Event').capitalize(), e.get('eventDate', '—')) for e in d.get('events', [])]
+            fields += [('Nameservers', ', '.join(n.get('ldhName', '') for n in d.get('nameservers', [])) or 'Not disclosed')]
+            table('registration', ['Field', 'Value'], fields)
+        table('subdomains', ['Hostname', 'Pattern', 'Certificate expires'],
+              [(r['name'], 'Wildcard' if r['value'].get('wildcard') else 'Exact', r['value'].get('not_after')) for r in by('subdomain')])
+        table('dns', ['Name', 'Type', 'Answer', 'TTL', 'Resolver'],
+              [(r['name'], r['value'].get('rrtype'), r['value'].get('value'), r['value'].get('ttl'), r['value'].get('resolver')) for r in by('dns_record')])
+        if by('dns_empty'):
+            self.line(f"  {len(by('dns_empty'))} DNS queries had no records. Details: --verbose.", 'dns')
+            rendered = True
+        for r in by('certificate'):
+            d = r['value']; c = d.get('certificate', {})
+            flat = lambda items: ', '.join(f'{k}={v}' for group in items for k, v in group)
+            table('tls', ['Field', 'Value'], [('Host', r['name']), ('Protocol', d.get('protocol')),
+                  ('Cipher', (d.get('cipher') or ['—'])[0]), ('Subject', flat(c.get('subject', []))),
+                  ('Issuer', flat(c.get('issuer', []))), ('Valid from', c.get('notBefore')),
+                  ('Valid until', c.get('notAfter')), ('Verification', 'Passed')])
+        table('tls', ['Certificate DNS names'], [(r['name'],) for r in by('certificate_name')])
+        http = []
+        for r in by('http_response'):
+            d = r['value']; h = {k.lower(): v for k, v in d.get('headers', {}).items()}
+            http.append((r['name'], d.get('status'), d.get('content_type', h.get('content-type', '—')), d.get('server', h.get('server', '—'))))
+        table('http', ['URL', 'Status', 'Content type', 'Server'], http)
+        table('http', ['Page', 'Title'], [(r['name'], r['value']) for r in by('title')])
+        table('http', ['From', 'Redirect — not followed'], [(r['name'], r['value'].get('url')) for r in by('redirect')])
+        table('http', ['Public metadata', 'Status'], [(r['name'], r['value'].get('status')) for r in by('public_metadata')])
+        table('http', ['robots.txt directive', 'Value'], [(r['value'].get('directive'), r['value'].get('value')) for r in by('robots_rule')])
+        hints, seen = [], set()
+        for r in by('technology_hint'):
+            d = r['value']
+            pair = (d.get('technology', d.get('value', 'Unknown')), d.get('evidence', 'Heuristic'))
+            if pair not in seen:
+                hints.append(pair); seen.add(pair)
+        table('technologies', ['Technology / header hint', 'Evidence — not verified'], hints)
+        table('crawl', ['Discovered public URL'], [(r['name'],) for r in by('public_url')])
+        table('subdomains', ['Candidate hostname', 'DNS answers', 'Wildcard detected'],
+              [(r['name'], ', '.join(str(v) for _, v in r['value'].get('records', [])), r['value'].get('wildcard_detected')) for r in by('subdomain_candidate')])
+        table('paths', ['Path candidate', 'Status', 'Sampled bytes'],
+              [(r['name'], r['value'].get('status'), r['value'].get('bytes_sampled')) for r in by('path_candidate')])
+        table('archive', ['Historical URL — not live-verified'], [(r['value'].get('url'),) for r in by('archived_url')])
+        table('dorks', ['Google query — generated'], [(r['value'].get('query'),) for r in by('dork')])
+        table('dorks', ['Search result', 'URL'], [(r['value'].get('title'), r['value'].get('url')) for r in by('search_result')])
+        for r in by('wildcard_check'):
+            self.line('  Wildcard DNS: ' + ('detected; results require review' if r['value'].get('detected') else 'not observed in random samples'), 'subdomains')
+            rendered = True
+        for r in by('error'):
+            message = r['value'].get('message', r['value']) if isinstance(r['value'], dict) else r['value']
+            self.line('  ERROR: ' + self.safe(r['name']) + ' — ' + self.safe(message), 'errors')
+            rendered = True
+        for r in by('skipped') + by('limit') + by('interrupted'):
+            self.line('  ' + self.safe(r['name']) + ': ' + self.safe(r['value']), 'notes')
+            rendered = True
+        if not rendered:
+            self.line('  No findings returned.', 'notes')
+        if getattr(self.a, 'verbose', False):
+            self.line('  RAW EVIDENCE (--verbose)', 'notes')
+            for r in rows:
+                self.line(json.dumps(r, ensure_ascii=True), 'notes')
         self.stream.flush()
 
+    def render(self, module=None):
+        self.flush()
+
+    def end(self, errors=0, interrupted=False, elapsed=None):
+        if not self.finished:
+            self.line()
+            label = 'Interrupted' if interrupted else 'Finished'
+            suffix = f' in {elapsed:.1f}s' if elapsed is not None else ''
+            self.line(f'{label}{suffix} · {errors} error(s)', 'errors' if errors or interrupted else 'tls', True)
+            self.finished = True
+
+    def finish(self, elapsed, interrupted=False):
+        self.flush()
+        errors = self.counts['error']
+        if self.human:
+            self.end(errors, interrupted, elapsed)
+        else:
+            self.emit('run', 'summary', self.target, {'errors': errors, 'counts': dict(self.counts),
+                      'elapsed_seconds': round(elapsed, 2), 'interrupted': interrupted})
+        self.close()
+
     def close(self):
+        if self.stream.closed:
+            return
+        if self.human and not self.finished:
+            self.flush()
+            self.end(self.counts['error'])
         if self.owned:
             self.stream.close()
 
@@ -442,18 +646,16 @@ class Recon:
 
 
 def parser():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        epilog='Only assess authorized targets. Passive contacts third-party services, not the target. '
-               'Active GET requests can have side effects on badly designed applications.')
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter, epilog='Only assess authorized targets. Passive contacts third-party services, not the target. Active GET requests can have side effects on badly designed applications.')
     p.add_argument('-u', '--url', required=True, help='target hostname or HTTP(S) URL; no positional arguments')
     p.add_argument('-m', '--mode', choices=('passive', 'active'), default='passive')
     p.add_argument('--domain', help='explicit passive domain scope (e.g. example.co.uk); defaults to target hostname')
     p.add_argument('--modules', help='comma-separated modules; passive: rdap,ct,archive,dorks; active: dns,tls,http,crawl,subdomains,paths')
-    p.add_argument('-f', '--format', choices=('text', 'tsv', 'jsonl'), default='text')
+    p.add_argument('-f', '--format', choices=['pretty', 'text', 'tsv', 'jsonl'], default='pretty')
     p.add_argument('-o', '--output', help='write results to this file instead of stdout')
     p.add_argument('--timeout', type=positive, default=15, help='network timeout in seconds')
     p.add_argument('--delay', type=nonnegative, default=0.5, help='minimum seconds between operations; sequential, no parallel workers')
-    p.add_argument('--max-bytes', type=positive_int, default=10_000_000, help='maximum bytes read per HTTP response')
+    p.add_argument('--max-bytes', type=positive_int, default=10000000, help='maximum bytes read per HTTP response')
     p.add_argument('--archive-limit', type=positive_int, default=200, help='maximum archive rows requested')
     p.add_argument('--google-search', action='store_true', help='execute 5 Google queries through SerpApi; needs SERPAPI_KEY; may use paid quota')
     p.add_argument('--resolver', action='append', help='DNS resolver IP; repeat for multiple resolvers; default: system resolver')
@@ -462,6 +664,13 @@ def parser():
     p.add_argument('--dns-wordlist', help='prefix wordlist; opts into active subdomain enumeration under target hostname')
     p.add_argument('--path-wordlist', help='path wordlist; opts into active path checks from origin root')
     p.add_argument('--max-words', type=positive_int, default=100, help='maximum entries processed per wordlist')
+    p.add_argument('--archive', action='store_true', help='opt in to historical Wayback URLs (passive only)')
+    p.add_argument('--dorks', action='store_true', help='opt in to Google dork generation (passive only)')
+    p.add_argument('--crawl', action='store_true', help='opt in to same-origin crawling (active only)')
+    p.add_argument('--color', choices=['auto', 'always', 'never'], default='auto', help='terminal colors; machine formats never use ANSI')
+    p.add_argument('--no-color', action='store_const', dest='color', const='never', help='disable terminal colors')
+    p.add_argument('--display-limit', type=int, default=30, help='maximum displayed rows per human table; must be positive')
+    p.add_argument('-v', '--verbose', action='store_true', help='include raw diagnostic evidence')
     return p
 
 
@@ -469,6 +678,8 @@ def main(argv=None):
     global requests
     p = parser()
     a = p.parse_args(argv)
+    if a.display_limit <= 0:
+        p.error('--display-limit must be positive')
     try:
         url, host = target_url(a.url)
         domain = hostname(a.domain) if a.domain else host
@@ -478,8 +689,7 @@ def main(argv=None):
             ipaddress.ip_address(resolver)
     except (ValueError, UnicodeError) as exc:
         p.error(str(exc))
-    modules = ([m.strip() for m in a.modules.split(',') if m.strip()] if a.modules else
-               (['rdap', 'ct', 'archive', 'dorks'] if a.mode == 'passive' else ['dns', 'tls', 'http', 'crawl']))
+    modules = _recon_select_modules(a, p)
     if a.mode == 'passive' and (a.dns_wordlist or a.path_wordlist or a.resolver):
         p.error('DNS resolvers and wordlists require --mode active')
     if a.mode == 'active' and a.google_search:
@@ -492,14 +702,14 @@ def main(argv=None):
         p.error('invalid modules for selected mode: ' + ','.join(sorted(set(modules) - MODULES[a.mode])))
     if a.google_search and 'dorks' not in modules:
         p.error('--google-search requires the dorks module')
-    if 'subdomains' in modules and not a.dns_wordlist:
+    if 'subdomains' in modules and (not a.dns_wordlist):
         p.error('subdomains module requires --dns-wordlist')
-    if 'paths' in modules and not a.path_wordlist:
+    if 'paths' in modules and (not a.path_wordlist):
         p.error('paths module requires --path-wordlist')
     for filename in (a.dns_wordlist, a.path_wordlist):
-        if filename and not Path(filename).is_file():
+        if filename and (not Path(filename).is_file()):
             p.error(f'wordlist not found: {filename}')
-        if filename and a.output and Path(filename).resolve() == Path(a.output).resolve():
+        if filename and a.output and (Path(filename).resolve() == Path(a.output).resolve()):
             p.error('output must not overwrite an input wordlist')
     try:
         import requests as requests_module
@@ -513,29 +723,50 @@ def main(argv=None):
         p.error(f'missing dependency ({exc}); run: python -m pip install -r requirements.txt')
     except Exception as exc:
         p.error(f'invalid DNS type: {exc}')
-    r = Reporter(a.format, a.output, a.mode, host)
+    r = Reporter(a, host)
     recon = Recon(a, r, url, host, domain)
     interrupted = False
     try:
-        r.emit('run', 'scope', host, {'url': url, 'passive_domain': domain, 'modules': modules,
-               'active_http_scope': 'exact origin only; redirects recorded, never followed',
-               'active_dns_scope': 'target hostname and explicitly requested wordlist children'})
+        r.emit('run', 'scope', host, {'url': url, 'passive_domain': domain, 'modules': modules, 'active_http_scope': 'exact origin only; redirects recorded, never followed', 'active_dns_scope': 'target hostname and explicitly requested wordlist children'})
         for module in dict.fromkeys(modules):
-            print(f'[*] {module}', file=sys.stderr)
+            r.begin(module)
+            pass
             try:
                 getattr(recon, module)()
             except Exception as exc:
                 recon.error(module, host, exc)
+            r.render(module)
     except KeyboardInterrupt:
         interrupted = True
         r.emit('run', 'interrupted', host, 'Interrupted by user')
     finally:
         errors = r.counts['error']
-        r.emit('run', 'summary', host, {'counts': dict(r.counts), 'errors': errors,
-                                     'interrupted': interrupted})
+        r.emit('run', 'summary', host, {'counts': dict(r.counts), 'errors': errors, 'interrupted': interrupted})
         recon.close()
         r.close()
-    return 130 if interrupted else (1 if errors else 0)
+    return 130 if interrupted else 1 if errors else 0
+
+
+def _recon_select_modules(a, p):
+    allowed = {'passive': {'rdap', 'ct', 'archive', 'dorks'},
+               'active': {'dns', 'tls', 'http', 'crawl', 'subdomains', 'paths'}}
+    modules = ([m.strip() for m in a.modules.split(',') if m.strip()] if a.modules is not None
+               else (['rdap', 'ct'] if a.mode == 'passive' else ['dns', 'tls', 'http']))
+    if a.mode == 'passive' and (a.crawl or a.dns_wordlist or a.path_wordlist or a.resolver):
+        p.error('crawling, resolvers and wordlists require --mode active')
+    if a.mode == 'active' and (a.archive or a.dorks or a.google_search):
+        p.error('archive and Google dorks require --mode passive')
+    for enabled, module in [(a.archive, 'archive'), (a.dorks or a.google_search, 'dorks'),
+                            (a.crawl, 'crawl'), (a.dns_wordlist, 'subdomains'), (a.path_wordlist, 'paths')]:
+        if enabled and module not in modules:
+            modules.append(module)
+    if not modules or set(modules) - allowed[a.mode]:
+        p.error('invalid modules for ' + a.mode + ': ' + ','.join(modules))
+    if 'subdomains' in modules and not a.dns_wordlist:
+        p.error('subdomains requires --dns-wordlist')
+    if 'paths' in modules and not a.path_wordlist:
+        p.error('paths requires --path-wordlist')
+    return list(dict.fromkeys(modules))
 
 
 if __name__ == '__main__':
